@@ -1,5 +1,5 @@
 const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:3105'
+  import.meta.env.VITE_API_BASE_URL || 'https://waguri-vndh.onrender.com'
 ).replace(/\/+$/, '')
 
 async function request(path, { method = 'GET', body, signal } = {}) {
