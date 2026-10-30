@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f9f8f3" />
+    <meta name="theme-color" content="#f7f6ef" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
@@ -11,6 +11,16 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      const themes = ['paper-ink', 'catppuccin-mocha', 'catppuccin-latte', 'tokyo-night', 'dracula', 'nord', 'gruvbox', 'everforest', 'rose-pine'];
+      try {
+        const savedTheme = localStorage.getItem('opensource-buddy-theme');
+        document.documentElement.dataset.theme = themes.includes(savedTheme) ? savedTheme : 'paper-ink';
+      } catch {
+        document.documentElement.dataset.theme = 'paper-ink';
+        document.documentElement.dataset.themeStorageError = 'true';
+      }
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

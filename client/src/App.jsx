@@ -1,10 +1,22 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Dashboard as LiveDashboard, IssueDetail as LiveIssueDetail } from './ConnectedScreens.jsx'
 import './App.css'
 
 const skills = ['Python', 'JavaScript', 'TypeScript', 'Java', 'C++', 'HTML', 'CSS', 'React', 'Node.js', 'SQL']
 const levels = ['Beginner', 'Intermediate', 'Advanced']
 const categories = ['Any category', 'Frontend', 'Backend & APIs', 'Documentation', 'Developer tools', 'Data & SQL']
+const themes = [
+  { id: 'paper-ink', name: 'Paper & Ink', mood: 'Warm paper, forest green' },
+  { id: 'catppuccin-mocha', name: 'Catppuccin Mocha', mood: 'Soft, pastel night' },
+  { id: 'catppuccin-latte', name: 'Catppuccin Latte', mood: 'Pastel, light mode' },
+  { id: 'tokyo-night', name: 'Tokyo Night', mood: 'Cool city twilight' },
+  { id: 'dracula', name: 'Dracula', mood: 'Vibrant midnight' },
+  { id: 'nord', name: 'Nord', mood: 'Arctic, understated' },
+  { id: 'gruvbox', name: 'Gruvbox', mood: 'Retro, warm earth' },
+  { id: 'everforest', name: 'Everforest', mood: 'Quiet forest shade' },
+  { id: 'rose-pine', name: 'Rosé Pine', mood: 'Muted, moonlit calm' },
+]
+const themeStorageKey = 'opensource-buddy-theme'
 
 function Icon({ name, size = 18 }) {
   const paths = {
@@ -35,8 +47,39 @@ function Brand({ onClick }) {
   return <button className="brand" type="button" onClick={onClick} aria-label="OpenSource Buddy home"><span className="brand-mark"><Icon name="code" size={18} /></span><span>OpenSource <span className="brand-strong">Buddy</span></span></button>
 }
 
-function Header({ page, savedCount, onNavigate, onSection }) {
+function ThemeStudio({ theme, onThemeChange, storageError, onClose }) {
+  const dialogRef = useRef(null)
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    if (!dialog.open) dialog.showModal()
+  }, [])
+
+  return (
+    <dialog className="theme-studio" ref={dialogRef} aria-labelledby="theme-studio-title" onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); dialogRef.current?.close(); onClose() } }} onCancel={(event) => { event.preventDefault(); onClose() }} onClose={onClose}>
+      <div className="theme-studio-heading">
+        <div><span className="eyebrow">MAKE IT YOUR WORKSPACE</span><h2 id="theme-studio-title">Appearance</h2><p>Choose a palette for your contribution notebook.</p></div>
+        <button className="theme-studio-close" type="button" onClick={() => dialogRef.current?.close()} aria-label="Close appearance settings"><Icon name="close" size={18} /></button>
+      </div>
+      {storageError && <p className="theme-storage-error" role="status">{storageError}</p>}
+      <div className="theme-options" role="group" aria-label="Available color themes">
+        {themes.map((item) => (
+          <button key={item.id} className="theme-option" type="button" data-theme-preview={item.id} aria-pressed={theme === item.id} onClick={() => onThemeChange(item.id)}>
+            <span className="theme-option-top"><span className="theme-swatch-row" aria-hidden="true"><i /><i /><i /><i /></span><span className="theme-selected" aria-hidden="true"><Icon name="check" size={12} /></span></span>
+            <span className="theme-mini-preview" aria-hidden="true"><i /><span><i /><i /></span><b /></span>
+            <span className="theme-option-name">{item.name}</span>
+            <span className="theme-option-mood">{item.mood}</span>
+          </button>
+        ))}
+      </div>
+    </dialog>
+  )
+}
+
+function Header({ page, savedCount, onNavigate, onSection, theme, onThemeChange, themeStorageError }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [studioOpen, setStudioOpen] = useState(false)
   const closeMenu = () => setMenuOpen(false)
   const navigate = (nextPage) => {
     closeMenu()
@@ -59,11 +102,13 @@ function Header({ page, savedCount, onNavigate, onSection }) {
           <button className="nav-link mobile-start" type="button" onClick={() => navigate('skills')}>Get Started <Icon name="arrow" size={15} /></button>
         </nav>
         <div className="header-actions">
+          <button className="theme-studio-trigger" type="button" aria-label={`Appearance: ${themes.find((item) => item.id === theme)?.name}`} onClick={() => setStudioOpen(true)}><Icon name="sparkle" size={16} /><span>Appearance</span></button>
           <button className={`header-saved ${page === 'saved' ? 'active' : ''}`} type="button" onClick={() => navigate('saved')} aria-label={`Saved issues, ${savedCount} saved`}><Icon name="bookmark" size={16} /><span>Saved Issues</span><span className="saved-count">{savedCount}</span></button>
           <button className="header-cta" type="button" onClick={() => navigate('skills')}>Get Started <Icon name="arrow" size={16} /></button>
           <button className="menu-toggle" type="button" onClick={() => setMenuOpen(!menuOpen)} aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen}><Icon name={menuOpen ? 'close' : 'menu'} size={19} /></button>
         </div>
       </div>
+      {studioOpen && <ThemeStudio theme={theme} onThemeChange={onThemeChange} storageError={themeStorageError} onClose={() => setStudioOpen(false)} />}
     </header>
   )
 }
@@ -198,6 +243,8 @@ function readSavedState() {
 
 function App() {
   const [page, setPage] = useState('home')
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || 'paper-ink')
+  const [themeStorageError, setThemeStorageError] = useState(() => document.documentElement.dataset.themeStorageError === 'true' ? 'Theme changes will last for this session because browser storage is unavailable.' : '')
   const [selectedSkills, setSelectedSkills] = useState(['JavaScript', 'CSS'])
   const [level, setLevel] = useState('Beginner')
   const [category, setCategory] = useState('Any category')
@@ -207,6 +254,19 @@ function App() {
   const [selectedIssue, setSelectedIssue] = useState(null)
   const [detailOrigin, setDetailOrigin] = useState('dashboard')
   const [storageError, setStorageError] = useState(initialSaved.error)
+
+  const changeTheme = (nextTheme) => {
+    setTheme(nextTheme)
+    document.documentElement.dataset.theme = nextTheme
+    try {
+      window.localStorage.setItem(themeStorageKey, nextTheme)
+      delete document.documentElement.dataset.themeStorageError
+      setThemeStorageError('')
+    } catch {
+      document.documentElement.dataset.themeStorageError = 'true'
+      setThemeStorageError('Theme changed for this session, but browser storage is unavailable.')
+    }
+  }
 
   const toggleSavedIssue = (issue) => {
     const isSaved = saved.includes(issue.id)
@@ -246,7 +306,7 @@ function App() {
     navigate('detail')
   }
 
-  return <div className="app-shell"><Header page={page} savedCount={saved.length} onNavigate={navigate} onSection={navigateToSection} />
+  return <div className="app-shell"><Header page={page} savedCount={saved.length} onNavigate={navigate} onSection={navigateToSection} theme={theme} onThemeChange={changeTheme} themeStorageError={themeStorageError} />
     {page === 'home' && <Landing onStart={() => navigate('skills')} onSection={navigateToSection} />}
     {page === 'skills' && <Skills selectedSkills={selectedSkills} setSelectedSkills={setSelectedSkills} level={level} setLevel={setLevel} category={category} setCategory={setCategory} onContinue={() => navigate('dashboard')} onBack={() => navigate('home')} />}
     {(page === 'dashboard' || page === 'saved') && <LiveDashboard key={page} selectedSkills={selectedSkills} level={level} category={category} saved={saved} savedIssues={savedIssues} onToggleSave={toggleSavedIssue} onSelectIssue={openIssue} onEditPreferences={() => navigate('skills')} onOpenSaved={() => navigate('saved')} onDiscover={() => navigate('dashboard')} view={page} storageError={storageError} />}
