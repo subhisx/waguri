@@ -27,36 +27,62 @@ function invalidResponse(field) {
   return new AIServiceError(`Ollama returned an invalid AI response (${field}).`);
 }
 
-function getLocalOllamaUrl() {
+function getOllamaConfiguration(baseUrl, apiKey) {
   let url;
 
   try {
-    url = new URL(config.OLLAMA_BASE_URL);
+    url = new URL(baseUrl);
   } catch {
-    throw new AIServiceError('OLLAMA_BASE_URL must be a valid local URL.', 500);
+    throw new AIServiceError(
+      'OLLAMA_BASE_URL must be a local Ollama URL or a remote HTTPS gateway URL.',
+      500,
+    );
   }
 
   const isLoopback = ['localhost', '127.0.0.1', '::1'].includes(
     url.hostname.replace(/^\[|\]$/g, '').toLowerCase(),
   );
-  if (url.protocol !== 'http:' || !isLoopback || url.username || url.password) {
+  const isRemoteHttps = url.protocol === 'https:' && !isLoopback;
+  const hasInvalidUrlParts = url.username
+    || url.password
+    || (url.pathname !== '' && url.pathname !== '/')
+    || url.search
+    || url.hash;
+  const isLocalOllama = isLoopback && url.protocol === 'http:';
+
+  if (hasInvalidUrlParts || (!isLocalOllama && !isRemoteHttps)) {
     throw new AIServiceError(
-      'Ollama must be configured with a local HTTP URL (localhost or loopback address).',
+      'Ollama must use localhost over HTTP or a remote HTTPS gateway URL.',
       500,
     );
   }
 
-  return url.toString().replace(/\/+$/, '');
+  if (apiKey && apiKey.length < 32) {
+    throw new AIServiceError('OLLAMA_API_KEY must contain at least 32 characters.', 500);
+  }
+
+  if (isRemoteHttps && !apiKey) {
+    throw new AIServiceError(
+      'OLLAMA_API_KEY is required when using a remote HTTPS gateway.',
+      500,
+    );
+  }
+
+  return {
+    baseURL: url.origin.replace(/\/+$/, ''),
+    timeout: REQUEST_TIMEOUT_MS,
+    maxRedirects: 0,
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(apiKey ? { 'x-api-key': apiKey } : {}),
+    },
+  };
 }
 
-const ollama = axios.create({
-  baseURL: getLocalOllamaUrl(),
-  timeout: REQUEST_TIMEOUT_MS,
-  headers: {
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
-  },
-});
+const ollama = axios.create(
+  getOllamaConfiguration(config.OLLAMA_BASE_URL, config.OLLAMA_API_KEY),
+);
 
 function validateText(value, field, { required = true, maxLength = 4000 } = {}) {
   if (typeof value !== 'string'
@@ -358,24 +384,31 @@ async function generateJson(systemPrompt, input, validateResponse) {
       );
     }
 
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      throw new AIServiceError(
+        'Ollama gateway authentication failed. Check the backend OLLAMA_API_KEY configuration.',
+        502,
+      );
+    }
+
     if (error.code === 'ECONNREFUSED'
       || error.code === 'ENOTFOUND'
       || error.code === 'ECONNRESET') {
       throw new AIServiceError(
-        'Ollama is unavailable. Start the local Ollama service and try again.',
+        'The configured Ollama endpoint is unavailable. Check the gateway and tunnel.',
         503,
       );
     }
 
     if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
       throw new AIServiceError(
-        'Ollama request timed out. Try again after checking the local model.',
+        'The Ollama request timed out. Check the model, gateway, and tunnel.',
         504,
       );
     }
 
     throw new AIServiceError(
-      'The local Ollama request failed. Check Ollama and its server logs.',
+      'The configured Ollama request failed. Check Ollama and gateway logs.',
       502,
     );
   }
@@ -430,6 +463,7 @@ module.exports = {
   AIServiceError,
   explainIssue,
   generateRoadmap,
+  getOllamaConfiguration,
   validateExplanationInput,
   validateRoadmapInput,
 };

@@ -250,12 +250,32 @@ The server loads `server/.env` using dotenv. Supported variables:
 | `PORT` | `3000` | Express listening port. |
 | `NODE_ENV` | `development` | Node environment label. |
 | `GITHUB_TOKEN` | empty | Optional GitHub REST API authentication; remains server-side. |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama HTTP base URL. Must use localhost or a loopback address. |
-| `OLLAMA_MODEL` | `gemma4:e4b` | Local Ollama model identifier. |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Local Ollama HTTP URL or remote HTTPS gateway URL. |
+| `OLLAMA_API_KEY` | empty | Gateway `x-api-key`; required for remote HTTPS gateways. Keep this secret on the backend only. |
+| `OLLAMA_MODEL` | `gemma4:e4b` | Ollama model identifier. |
 
 Do not expose `GITHUB_TOKEN` to clients or commit `.env`.
-The AI service validates the Ollama URL during startup; a non-local or
-malformed `OLLAMA_BASE_URL` prevents the backend from starting.
+Do not expose `OLLAMA_API_KEY` to clients or commit `.env`. The AI service
+validates the Ollama URL during startup: it accepts loopback HTTP or a remote
+HTTPS gateway, requires a key for remote URLs, and rejects other protocols,
+URL credentials, paths, query strings, and redirects. Requests use the
+`x-api-key` header and a 120-second timeout.
+
+### Render configuration for a local Ollama gateway
+
+Set these variables in the Render backend service:
+
+| Variable | Value |
+| --- | --- |
+| `OLLAMA_BASE_URL` | The current root HTTPS URL printed by `start-gemma-stack.ps1`, for example `https://<generated-name>.trycloudflare.com`. Do not add `/api`. |
+| `OLLAMA_API_KEY` | The same secret as `GATEWAY_API_KEY` in the local gateway `.env`. Enter it in Render's secret environment-variable field; never put it in Vercel. |
+| `OLLAMA_MODEL` | `gemma4:e4b` |
+
+Render's `PORT` is supplied by Render. Keep `GITHUB_TOKEN` configured there
+if the backend's GitHub API integration needs authenticated rate limits.
+Cloudflare Quick Tunnel hostnames change when the tunnel restarts; update
+`OLLAMA_BASE_URL` in Render to the newly printed URL. The PC, Ollama, gateway,
+and tunnel must remain online for Render's AI routes to reach the model.
 
 ## Starting the backend
 
@@ -289,8 +309,10 @@ Verify the model is available:
 ollama list
 ```
 
-Keep the Ollama base URL local. AI endpoints return an error if Ollama or the
-configured model is unavailable; the backend does not fabricate AI responses.
+Keep Ollama bound to localhost; expose only the authenticated gateway through
+the Cloudflare tunnel or another trusted HTTPS gateway. AI endpoints return
+an error if Ollama, the gateway, the tunnel, or the configured model is
+unavailable; the backend does not fabricate AI responses.
 
 ## CORS
 
