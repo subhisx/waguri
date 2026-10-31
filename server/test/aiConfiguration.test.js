@@ -9,6 +9,7 @@ const originalOllamaEnvironment = {
 };
 const originalAxiosCreate = axios.create;
 const outgoingRequests = [];
+let adapterError = null;
 
 process.env.OLLAMA_BASE_URL = 'https://gateway.example.com';
 process.env.OLLAMA_API_KEY = 'test-gateway-key-that-is-at-least-thirty-two-characters';
@@ -18,6 +19,10 @@ axios.create = (configuration) => originalAxiosCreate({
   ...configuration,
   adapter: async (request) => {
     outgoingRequests.push(request);
+    if (adapterError) {
+      throw adapterError;
+    }
+
     return {
       data: {
         message: {
@@ -91,6 +96,46 @@ test('sends authenticated roadmap requests to a remote HTTPS gateway', async () 
   assert.equal(request.url, '/api/chat');
   assert.equal(request.headers.get('x-api-key'), gatewayKey);
   assert.equal(JSON.parse(request.data).model, 'gemma4:e4b');
+});
+
+test('logs sanitized Axios diagnostics for network failures', async () => {
+  const loggedErrors = [];
+  const originalConsoleError = console.error;
+  adapterError = new axios.AxiosError(
+    `socket hang up; x-api-key=${gatewayKey}`,
+    'ECONNRESET',
+  );
+  console.error = (...args) => loggedErrors.push(args);
+
+  try {
+    await assert.rejects(
+      aiService.generateRoadmap({
+        skills: ['Python'],
+        experience: 'beginner',
+        issue: {
+          id: 123,
+          number: 42,
+          title: 'Improve beginner documentation',
+          description: 'Update the guide with a clear example.',
+          url: 'https://github.com/example/project/issues/42',
+          repository: 'example/project',
+          labels: ['good first issue'],
+        },
+      }),
+      { statusCode: 503 },
+    );
+  } finally {
+    adapterError = null;
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(loggedErrors.length, 1);
+  assert.equal(loggedErrors[0][0], '[aiService] Ollama request failed');
+  assert.equal(loggedErrors[0][1].status, null);
+  assert.equal(loggedErrors[0][1].code, 'ECONNRESET');
+  assert.match(loggedErrors[0][1].message, /socket hang up/);
+  assert.ok(!JSON.stringify(loggedErrors).includes(gatewayKey));
+  assert.match(JSON.stringify(loggedErrors), /\[REDACTED\]/);
 });
 
 test('configures authenticated local gateway requests', () => {

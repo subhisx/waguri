@@ -27,6 +27,19 @@ function invalidResponse(field) {
   return new AIServiceError(`Ollama returned an invalid AI response (${field}).`);
 }
 
+function sanitizeDiagnosticMessage(message, secret) {
+  const messageText = String(message || 'Unknown Axios error');
+  const redactedMessage = secret
+    ? messageText.split(secret).join('[REDACTED]')
+    : messageText;
+
+  return redactedMessage
+    .replace(/(authorization|x-api-key)\s*[:=]\s*[^,\s]+/gi, '$1=[REDACTED]')
+    .replace(/https?:\/\/[^/\s:@]+:[^/\s@]+@/gi, '[REDACTED]@')
+    .replace(/[\r\n\t]/g, ' ')
+    .slice(0, 240);
+}
+
 function getOllamaConfiguration(baseUrl, apiKey) {
   let url;
 
@@ -373,6 +386,14 @@ async function generateJson(systemPrompt, input, validateResponse) {
     if (!axios.isAxiosError(error)) {
       throw error;
     }
+
+    console.error('[aiService] Ollama request failed', {
+      status: Number.isInteger(error.response?.status)
+        ? error.response.status
+        : null,
+      code: error.code || null,
+      message: sanitizeDiagnosticMessage(error.message, config.OLLAMA_API_KEY),
+    });
 
     const apiMessage = String(error.response?.data?.error || '');
     if (/model .* not found|model not found|pull.*model/i.test(apiMessage)
