@@ -10,6 +10,21 @@ const originalOllamaEnvironment = {
 const originalAxiosCreate = axios.create;
 const outgoingRequests = [];
 let adapterError = null;
+let modelOutputs = [];
+
+function createRoadmapResponse(stepCount = 9) {
+  return JSON.stringify({
+    steps: Array.from({ length: stepCount }, (_, index) => ({
+      number: index + 1,
+      title: `Step ${index + 1}`,
+      instructions: 'Follow the repository guidance.',
+    })),
+    learningTopics: [],
+    recommendedTools: [],
+    testingAdvice: 'Follow the repository testing instructions.',
+    pullRequestAdvice: 'Describe and link the changes.',
+  });
+}
 
 process.env.OLLAMA_BASE_URL = 'https://gateway.example.com';
 process.env.OLLAMA_API_KEY = 'test-gateway-key-that-is-at-least-thirty-two-characters';
@@ -26,17 +41,7 @@ axios.create = (configuration) => originalAxiosCreate({
     return {
       data: {
         message: {
-          content: JSON.stringify({
-            steps: Array.from({ length: 9 }, (_, index) => ({
-              number: index + 1,
-              title: `Step ${index + 1}`,
-              instructions: 'Follow the repository guidance.',
-            })),
-            learningTopics: [],
-            recommendedTools: [],
-            testingAdvice: 'Follow the repository testing instructions.',
-            pullRequestAdvice: 'Describe and link the changes.',
-          }),
+          content: modelOutputs.length ? modelOutputs.shift() : createRoadmapResponse(),
         },
       },
       status: 200,
@@ -96,6 +101,108 @@ test('sends authenticated roadmap requests to a remote HTTPS gateway', async () 
   assert.equal(request.url, '/api/chat');
   assert.equal(request.headers.get('x-api-key'), gatewayKey);
   assert.equal(JSON.parse(request.data).model, 'gemma4:e4b');
+});
+
+test('retries an incomplete roadmap response once with additional output budget', async () => {
+  const firstRequestIndex = outgoingRequests.length;
+  modelOutputs.push(createRoadmapResponse(8), createRoadmapResponse());
+
+  const result = await aiService.generateRoadmap({
+    skills: ['Python'],
+    experience: 'beginner',
+    issue: {
+      id: 123,
+      number: 42,
+      title: 'Improve beginner documentation',
+      description: 'Update the guide with a clear example.',
+      url: 'https://github.com/example/project/issues/42',
+      repository: 'example/project',
+      labels: ['good first issue'],
+    },
+  });
+
+  assert.equal(result.steps.length, 9);
+  assert.equal(outgoingRequests.length - firstRequestIndex, 2);
+  const firstRequest = JSON.parse(outgoingRequests[firstRequestIndex].data);
+  assert.equal(firstRequest.options.num_predict, 2048);
+  assert.equal(firstRequest.format.properties.steps.minItems, 9);
+  assert.equal(firstRequest.format.properties.steps.maxItems, 9);
+  assert.match(
+    JSON.parse(outgoingRequests[firstRequestIndex + 1].data).messages[0].content,
+    /previous response did not satisfy the required output schema/,
+  );
+});
+
+test('retries an explanation missing problem once without weakening its schema', async () => {
+  const firstRequestIndex = outgoingRequests.length;
+  const validExplanation = {
+    summary: 'A documentation improvement is proposed.',
+    problem: 'The exact problem is not specified in the supplied issue.',
+    whyItMatches: 'The issue is labeled as a good first issue.',
+    requiredSkills: ['Python'],
+    estimatedDifficulty: {
+      level: 'Beginner',
+      explanation: 'The supplied difficulty estimate is Beginner.',
+    },
+    prerequisites: [],
+    possibleChallenges: [],
+  };
+  modelOutputs.push(
+    JSON.stringify({ ...validExplanation, problem: '' }),
+    JSON.stringify(validExplanation),
+  );
+
+  const result = await aiService.explainIssue({
+    skills: ['Python'],
+    experience: 'beginner',
+    issue: {
+      id: 123,
+      number: 42,
+      title: 'Improve beginner documentation',
+      description: 'Update the guide with a clear example.',
+      url: 'https://github.com/example/project/issues/42',
+      repository: 'example/project',
+      labels: ['good first issue'],
+      estimatedDifficulty: 'Beginner',
+      difficultyExplanation: 'The issue has a good first issue label.',
+    },
+    matchScore: 87.5,
+    componentScores: {
+      skillCompatibility: 90,
+      difficultyCompatibility: 100,
+      freshness: 75,
+      beginnerFriendliness: 100,
+    },
+  });
+
+  assert.equal(result.problem, validExplanation.problem);
+  assert.equal(outgoingRequests.length - firstRequestIndex, 2);
+  const explanationFormat = JSON.parse(outgoingRequests[firstRequestIndex].data).format;
+  assert.ok(explanationFormat.required.includes('problem'));
+  assert.equal(explanationFormat.properties.problem.minLength, 1);
+});
+
+test('stops after one retry when the model keeps returning malformed JSON', async () => {
+  const firstRequestIndex = outgoingRequests.length;
+  modelOutputs.push('{"steps":', '{"steps":');
+
+  await assert.rejects(
+    aiService.generateRoadmap({
+      skills: ['Python'],
+      experience: 'beginner',
+      issue: {
+        id: 123,
+        number: 42,
+        title: 'Improve beginner documentation',
+        description: 'Update the guide with a clear example.',
+        url: 'https://github.com/example/project/issues/42',
+        repository: 'example/project',
+        labels: ['good first issue'],
+      },
+    }),
+    /response was not valid JSON/,
+  );
+  assert.equal(outgoingRequests.length - firstRequestIndex, 2);
 });
 
 test('logs sanitized Axios diagnostics for network failures', async () => {

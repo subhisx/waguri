@@ -79,3 +79,61 @@ test('validates skills, experience, and issue content limits', () => {
     /issue.description/,
   );
 });
+
+test('extracts valid JSON from fenced or surrounding model text', () => {
+  const expected = { problem: 'The issue is not specified.' };
+
+  assert.deepEqual(
+    aiService.parseJsonContent(`Here is the response:\n\`\`\`json\n${JSON.stringify(expected)}\n\`\`\``),
+    expected,
+  );
+  assert.deepEqual(
+    aiService.parseJsonContent(`\uFEFF${JSON.stringify(expected)}\nDone.`),
+    expected,
+  );
+});
+
+test('rejects malformed or incomplete explanation JSON', () => {
+  assert.throws(
+    () => aiService.parseJsonContent('{"problem":'),
+    /response was not valid JSON/,
+  );
+  assert.throws(
+    () => aiService.validateExplanationResponse({
+      summary: 'Summary.',
+      problem: ' ',
+      whyItMatches: 'Reason.',
+      requiredSkills: [],
+      estimatedDifficulty: {
+        level: 'Beginner',
+        explanation: 'Based on supplied data.',
+      },
+      prerequisites: [],
+      possibleChallenges: [],
+    }),
+    /expected non-empty problem/,
+  );
+});
+
+test('requires exactly nine complete roadmap steps and accepts valid output', () => {
+  const validRoadmap = {
+    steps: Array.from({ length: 9 }, (_, index) => ({
+      number: index + 1,
+      title: `Model title ${index + 1}`,
+      instructions: `Step ${index + 1} instructions.`,
+    })),
+    learningTopics: [],
+    recommendedTools: [],
+    testingAdvice: 'Follow the repository testing instructions.',
+    pullRequestAdvice: 'Describe the changes and link the issue.',
+  };
+
+  assert.throws(
+    () => aiService.validateRoadmapResponse({
+      ...validRoadmap,
+      steps: validRoadmap.steps.slice(0, 8),
+    }),
+    /expected exactly nine roadmap steps/,
+  );
+  assert.equal(aiService.validateRoadmapResponse(validRoadmap).steps.length, 9);
+});
